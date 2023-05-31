@@ -1,0 +1,41 @@
+---
+title: "Bismarck Replication Project"
+output: github_document
+---
+# Install Packages and Load them
+```{r}
+#install.packages("haven")
+library(haven)
+```
+
+
+# Read the Dataset
+```{r}
+rm(list = ls())
+
+WD_file = dirname(rstudioapi::getSourceEditorContext()$path)
+setwd(WD_file)
+getwd()
+````
+
+
+```{r}
+data <- haven::read_dta('BDH-Bismarck-JEEA-spec1.dta')
+````
+
+# Explore the Data
+```{r}
+head(data)
+````
+
+```{r}
+# The 'summary' function gives a statistical summary for each column in your data
+summary(data)
+````
+
+```{r}
+# The 'str' function gives the structure of your data, showing you the type of data in each column and the first few entries in each column
+str(data)
+```
+
+
