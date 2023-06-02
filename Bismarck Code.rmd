@@ -6,6 +6,10 @@ output: github_document
 ```{r}
 #install.packages("haven")
 library(haven)
+#install.packages("stargazer")
+library(stargazer)
+#install.packages("labelled")
+library(labelled)
 ```
 
 
@@ -23,6 +27,16 @@ getwd()
 data <- haven::read_dta('BDH-Bismarck-JEEA-spec1.dta')
 ````
 
+```{r}
+# assuming data is your imported .dta dataset
+# install.packages("labelled")  # uncomment this line if the 'labelled' package is not installed
+library(labelled)
+
+var_label(data)
+
+val_labels(data)
+````
+
 # Explore the Data
 ```{r}
 head(data)
@@ -38,4 +52,243 @@ summary(data)
 str(data)
 ```
 
+Create summary statistics of all variables
+```{r}
+# This will calculate the mean, standard deviation, min, and max for all numeric variables in the dataset
+summary_stats <- data.frame(matrix(ncol = 4, nrow = 0))
+colnames(summary_stats) <- c("Variable", "Min", "Max", "Std.Dev")
+  
+for (col in colnames(data)) {
+  if(is.numeric(data[[col]])) {
+    min_val <- min(data[[col]], na.rm = TRUE)
+    max_val <- max(data[[col]], na.rm = TRUE)
+    sd_val <- sd(data[[col]], na.rm = TRUE)
+      
+    summary_stats <- rbind(summary_stats, c(col, min_val, max_val, sd_val))
+  }
+}
+````
 
+```{r}
+stargazer(summary_stats, type = "text", out = "summary_stats.doc", title = "Summary Statistics",
+          label = "tab:summary", table.layout = "dm", digits = 2, summary = FALSE)
+````
+
+```{r}
+# This will calculate the mean, standard deviation, min, and max for all numeric variables in the dataset
+summary_stats <- data.frame(matrix(ncol = 3, nrow = 0))
+colnames(summary_stats) <- c("Min", "Max", "Std.Dev")
+
+for (col in colnames(data)) {
+  if(is.numeric(data[[col]])) {
+    min_val <- min(data[[col]], na.rm = TRUE)
+    max_val <- max(data[[col]], na.rm = TRUE)
+    sd_val <- sd(data[[col]], na.rm = TRUE)
+    
+    stats <- c(min_val, max_val, sd_val)
+    names(stats) <- c("Min", "Max", "Std.Dev")
+    
+    summary_stats <- rbind(summary_stats, stats)
+    rownames(summary_stats)[nrow(summary_stats)] <- col
+  }
+}
+
+# Now, generate a summary table and export it to a Word document using `stargazer`:
+stargazer(summary_stats, type = "text", out = "summary_stats.doc", title = "Summary Statistics",
+          label = "tab:summary", table.layout = "dm", digits = 2, summary = FALSE)
+```
+
+# First try DiD
+
+```{r}
+# Install the package if it's not already installed
+install.packages("plm")
+
+# Load the package
+library(plm)
+```
+
+# Create Year Dummies 
+```{r}
+install.packages("fastDummies") 
+library(fastDummies)
+
+# Create BlueCollar variable
+data$BlueCollar <- ifelse(data$industry == 1, 1, 0)
+```
+
+Year Dummies and then interaction with blue collar variabel 
+```{r}
+# i need to convert year to factor for the following list later 
+data$year <- as.factor(data$year)
+
+#now year dummies
+data <- fastDummies::dummy_cols(data, select_columns = "year", remove_selected_columns = FALSE)
+
+# List of year dummy columns
+year_dummies <- grep("year_", names(data), value = TRUE)
+
+# show year_dummies variable
+year_dummies
+
+# Check if all year dummies exist in the data
+sapply(year_dummies, function(x) x %in% names(data))
+````
+
+```{r}
+"BlueCollar" %in% names(data)  # Should return TRUE
+is.numeric(data$BlueCollar)  # Should return TRUE
+````
+
+
+```{r}
+# Create interaction terms
+for (year in year_dummies) {
+  data[paste("BlueCollar", year, sep = "_")] <- data$BlueCollar * data[, year]
+}
+````
+
+# First try DiD
+```{r}
+summary(lm(dbo_tot_pc~factor(year)*industry+factor(year)+factor(occ)+waterwork_pc+sewage_pc+i_urb_pc, data = data))
+````
+
+# Second try DiD
+```{r}
+# Convert to panel data
+pdata <- pdata.frame(data, index = c("occ", "RB", "year"))
+
+# Model with fixed effects
+model <- plm(dbo_tot_pc ~ factor(year)*industry+occ*industry+waterwork_pc*industry+sewage_pc*industry+i_urb_pc*industry, data = pdata, 
+             model = "within", effect = "twoways")
+
+summary(model)
+````
+
+
+# Plot timeseries dbo_tot_pc and year
+```{r}
+
+````
+
+
+```{r}
+deathrate_year_means <- aggregate(dbo_tot_pc~year, data = data, FUN = mean)
+
+plot(deathrate_year_means)
+```
+
+```{r}
+library(ggplot2)
+
+# Calculate the mean dbo_tot_pc per year
+mean_dbo_tot_pc <- aggregate(dbo_tot_pc ~ year, data = data, FUN = mean)
+
+# Create a scatter plot with the mean dbo_tot_pc per year
+ggplot(mean_dbo_tot_pc, aes(x = year, y = dbo_tot_pc)) +
+  geom_point() +
+  labs(title = "Time Series Plot of Mean dbo_tot_pc",
+       x = "Year",
+       y = "Mean dbo_tot_pc") +
+  theme_minimal()
+
+```
+
+```{r}
+library(ggplot2)
+
+# Calculate the mean dbo_tot_pc per year and industry
+mean_dbo_tot_pc <- aggregate(dbo_tot_pc ~ year + industry, data = data, FUN = mean)
+
+# Create a scatter plot with different colors for each industry level
+ggplot(mean_dbo_tot_pc, aes(x = year, y = dbo_tot_pc, color = factor(industry))) +
+  geom_point() +
+  labs(title = "Time Series Plot of Mean dbo_tot_pc by Industry",
+       x = "Year",
+       y = "Mean dbo_tot_pc",
+       color = "Industry") +
+  theme_minimal()
+````
+
+```{r}
+library(ggplot2)
+
+# Calculate the mean dbo_tot_pc per year and industry
+mean_dbo_tot_pc <- aggregate(dbo_tot_pc ~ year + industry, data = data, FUN = mean)
+
+# Create a scatter plot with different colors for each industry level
+ggplot(mean_dbo_tot_pc, aes(x = year, y = dbo_tot_pc, color = factor(industry))) +
+  geom_point() +
+  geom_line(aes(group = industry), linetype = "dashed") +
+  labs(title = "Time Series Plot of Mean dbo_tot_pc by Industry",
+       x = "Year",
+       y = "Mean dbo_tot_pc",
+       color = "Industry") +
+  theme_minimal()
+
+````
+
+```{r}
+library(ggplot2)
+
+# Calculate the mean dbo_tot_pc per year and industry
+mean_dbo_tot_pc <- aggregate(dbo_tot_pc ~ year + industry, data = data, FUN = mean)
+
+# Create a scatter plot with different colors for each industry level
+ggplot(mean_dbo_tot_pc, aes(x = year, y = dbo_tot_pc, color = factor(industry))) +
+  geom_point() +
+  geom_line(aes(group = industry), linetype = "dashed") +
+  ggeom_vline(xintercept = 1884, linetype = "dashed", color = "black") +
+  labs(title = "Time Series Plot of Mean dbo_tot_pc by Industry",
+       x = "Year",
+       y = "Mean dbo_tot_pc",
+       color = "Industry") +
+  theme_minimal()
+````
+
+```{r}
+library(ggplot2)
+
+# Calculate the mean dbo_tot_pc per year and industry
+mean_dbo_tot_pc <- aggregate(dbo_tot_pc ~ year + industry, data = data, FUN = mean)
+
+# Convert the year variable to numeric
+mean_dbo_tot_pc$year <- as.numeric(as.character(mean_dbo_tot_pc$year))
+
+# Create a scatter plot with different colors for each industry level
+ggplot(mean_dbo_tot_pc, aes(x = year, y = dbo_tot_pc, color = factor(industry))) +
+  geom_point() +
+  geom_line(aes(group = industry), linetype = "dashed") +
+  geom_vline(xintercept = 1884, linetype = "dashed", color = "black", size = 0.5) +
+  labs(title = "Development of Mean Death Rate by Industry",
+       x = "Year",
+       y = "Mean Death Rate",
+       color = "Industry") +
+  theme_minimal()
+```
+
+```{r}
+library(ggplot2)
+
+# Calculate the mean dbo_tot_pc per year and industry
+mean_dbo_tot_pc <- aggregate(dbo_tot_pc ~ year + industry, data = data, FUN = mean)
+
+# Convert the year variable to numeric
+mean_dbo_tot_pc$year <- as.numeric(as.character(mean_dbo_tot_pc$year))
+
+# Create a scatter plot with different colors for each industry level
+plot <- ggplot(mean_dbo_tot_pc, aes(x = year, y = dbo_tot_pc, color = factor(industry))) +
+  geom_point() +
+  geom_line(aes(group = industry), linetype = "dashed") +
+  geom_vline(xintercept = 1884, linetype = "dashed", color = "black", size = 1.5) +
+  labs(title = "Development of Mean Death Rate by Industry",
+       x = "Year",
+       y = "Mean dbo_tot_pc") +
+  scale_color_manual(values = c("blue", "black"),
+                     labels = c("Blue Collar", "Public Servant")) +
+  theme_minimal()
+
+# Save the plot as a PNG file
+ggsave("plot.png", plot, width = 8, height = 6, dpi = 300)
+
+```
