@@ -10,6 +10,10 @@ library(haven)
 library(stargazer)
 #install.packages("labelled")
 library(labelled)
+#install.packages("plm")
+library(plm)
+#install.packages("fastDummies") 
+library(fastDummies)
 ```
 
 
@@ -24,99 +28,70 @@ getwd()
 
 
 ```{r}
-data <- haven::read_dta('BDH-Bismarck-JEEA-spec1.dta')
+data_BHI <- haven::read_dta('BDH-Bismarck-JEEA-spec1.dta')
 ````
 
+Get Variabel Labels
 ```{r}
-# assuming data is your imported .dta dataset
-# install.packages("labelled")  # uncomment this line if the 'labelled' package is not installed
-library(labelled)
+var_label(data_BHI)
 
-var_label(data)
-
-val_labels(data)
+val_labels(data_BHI)
 ````
 
 # Explore the Data
 ```{r}
-head(data)
+head(data_BHI)
 ````
 
 ```{r}
-# The 'summary' function gives a statistical summary for each column in your data
-summary(data)
+summary(data_BHI)
 ````
 
 ```{r}
-# The 'str' function gives the structure of your data, showing you the type of data in each column and the first few entries in each column
-str(data)
+str(data_BHI$industry)
 ```
 
-Create summary statistics of all variables
+# Check Panel Structure with plm package
+Result: Unbalanced Panel: n = 36, T = 336-336, N = 12096
 ```{r}
-# This will calculate the mean, standard deviation, min, and max for all numeric variables in the dataset
-summary_stats <- data.frame(matrix(ncol = 4, nrow = 0))
-colnames(summary_stats) <- c("Variable", "Min", "Max", "Std.Dev")
-  
-for (col in colnames(data)) {
-  if(is.numeric(data[[col]])) {
-    min_val <- min(data[[col]], na.rm = TRUE)
-    max_val <- max(data[[col]], na.rm = TRUE)
-    sd_val <- sd(data[[col]], na.rm = TRUE)
-      
-    summary_stats <- rbind(summary_stats, c(col, min_val, max_val, sd_val))
-  }
-}
+pdim(data_BHI)
 ````
 
+
+
+
+## S3 method for class 'pdata.frame', index.plm Extract the indexes of panel data
 ```{r}
-stargazer(summary_stats, type = "text", out = "summary_stats.doc", title = "Summary Statistics",
-          label = "tab:summary", table.layout = "dm", digits = 2, summary = FALSE)
-````
+#index(data, which = NULL)
+# First, create a pdata.frame
+#data("data_BHI", package = "plm")
+data_panel <- pdata.frame(data_BHI, index=c("id_occ", "id_year"))
+#pdata.frame( # all function parameters
+  x,
+  index = NULL,
+  drop.index = FALSE,
+  row.names = TRUE,
+  stringsAsFactors = FALSE,
+  replace.non.finite = FALSE,
+  drop.NA.series = FALSE,
+  drop.const.series = FALSE,
+  drop.unused.levels = FALSE
+)
 
-```{r}
-# This will calculate the mean, standard deviation, min, and max for all numeric variables in the dataset
-summary_stats <- data.frame(matrix(ncol = 3, nrow = 0))
-colnames(summary_stats) <- c("Min", "Max", "Std.Dev")
-
-for (col in colnames(data)) {
-  if(is.numeric(data[[col]])) {
-    min_val <- min(data[[col]], na.rm = TRUE)
-    max_val <- max(data[[col]], na.rm = TRUE)
-    sd_val <- sd(data[[col]], na.rm = TRUE)
-    
-    stats <- c(min_val, max_val, sd_val)
-    names(stats) <- c("Min", "Max", "Std.Dev")
-    
-    summary_stats <- rbind(summary_stats, stats)
-    rownames(summary_stats)[nrow(summary_stats)] <- col
-  }
-}
-
-# Now, generate a summary table and export it to a Word document using `stargazer`:
-stargazer(summary_stats, type = "text", out = "summary_stats.doc", title = "Summary Statistics",
-          label = "tab:summary", table.layout = "dm", digits = 2, summary = FALSE)
 ```
-
 # First try DiD
 
+## Create dichotomous BlueCollar variable
 ```{r}
-# Install the package if it's not already installed
-install.packages("plm")
-
-# Load the package
-library(plm)
-```
-
-# Create Year Dummies 
-```{r}
-install.packages("fastDummies") 
-library(fastDummies)
-
-# Create BlueCollar variable
 data$BlueCollar <- ifelse(data$industry == 1, 1, 0)
 ```
+Check if BlueCollar variable is correct
+```{r}
+"BlueCollar" %in% names(data)  # Should return TRUE
+is.numeric(data$BlueCollar)  # Should return TRUE
+````
 
+## Create Year Dummies ###### I do not use them atm
 Year Dummies and then interaction with blue collar variabel 
 ```{r}
 # i need to convert year to factor for the following list later 
@@ -135,22 +110,47 @@ year_dummies
 sapply(year_dummies, function(x) x %in% names(data))
 ````
 
-```{r}
-"BlueCollar" %in% names(data)  # Should return TRUE
-is.numeric(data$BlueCollar)  # Should return TRUE
-````
-
 
 ```{r}
 # Create interaction terms
-for (year in year_dummies) {
-  data[paste("BlueCollar", year, sep = "_")] <- data$BlueCollar * data[, year]
-}
+#for (year in year_dummies) {
+  #data[paste("BlueCollar", year, sep = "_")] <- data$BlueCollar * data[, year]}
 ````
 
 # First try DiD
 ```{r}
-summary(lm(dbo_tot_pc~factor(year)*industry+factor(year)+factor(occ)+waterwork_pc+sewage_pc+i_urb_pc, data = data))
+# summary(lm(dbo_tot_pc~factor(year)*industry+factor(year)+factor(occ)+waterwork_pc+sewage_pc+i_urb_pc, data = data))
+````
+
+# Trying to make the data balanced to maybe solve the error of "duplicate couples"
+
+```{r}
+#balanced_data <- make.pbalanced(data, index = c("id_occ", "year")) # district by occupation
+````
+
+```{r}
+# summary(plm(dbo_tot_pc~factor(year)*industry+factor(year)+factor(occ)+waterwork_pc+sewage_pc+i_urb_pc, data = data))
+
+dbo_tot_pc_did <- plm(dbo_tot_pc ~ industry*factor(year, exclude = 1884) + factor(year) + factor(occ) + i_urb_pc + waterwork_pc + sewage_pc,
+                    data = data_BHI,
+                    index = c("id_occ", "id_year"), # a character vector of length two containing the names of the individual and the time index
+                    model = "within", # or "pooling" or "random" or "fd" or "between"
+                    effect = "twoways"
+                  )
+
+summary(dbo_tot_pc_did)
+
+# print summary using robust standard errors
+#coeftest(dbo_tot_pc_did, vcov. = vcovHC, type = "HC1")
+````
+
+```{r}
+fixef(dbo_tot_pc_did)
+ ````
+
+# test 
+```{r}
+any(table(data$industry, data$year) > 1)
 ````
 
 # Second try DiD
