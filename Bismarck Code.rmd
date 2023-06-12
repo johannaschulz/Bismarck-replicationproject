@@ -57,121 +57,7 @@ Result: Unbalanced Panel: n = 36, T = 336-336, N = 12096
 pdim(data_BHI)
 ````
 
-
-
-
-## S3 method for class 'pdata.frame', index.plm Extract the indexes of panel data
-```{r}
-#index(data, which = NULL)
-# First, create a pdata.frame
-#data("data_BHI", package = "plm")
-data_panel <- pdata.frame(data_BHI, index=c("id_occ", "id_year"))
-#pdata.frame( # all function parameters
-  x,
-  index = NULL,
-  drop.index = FALSE,
-  row.names = TRUE,
-  stringsAsFactors = FALSE,
-  replace.non.finite = FALSE,
-  drop.NA.series = FALSE,
-  drop.const.series = FALSE,
-  drop.unused.levels = FALSE
-)
-
-```
-# First try DiD
-
-## Create dichotomous BlueCollar variable
-```{r}
-data$BlueCollar <- ifelse(data$industry == 1, 1, 0)
-```
-Check if BlueCollar variable is correct
-```{r}
-"BlueCollar" %in% names(data)  # Should return TRUE
-is.numeric(data$BlueCollar)  # Should return TRUE
-````
-
-## Create Year Dummies ###### I do not use them atm
-Year Dummies and then interaction with blue collar variabel 
-```{r}
-# i need to convert year to factor for the following list later 
-data$year <- as.factor(data$year)
-
-#now year dummies
-data <- fastDummies::dummy_cols(data, select_columns = "year", remove_selected_columns = FALSE)
-
-# List of year dummy columns
-year_dummies <- grep("year_", names(data), value = TRUE)
-
-# show year_dummies variable
-year_dummies
-
-# Check if all year dummies exist in the data
-sapply(year_dummies, function(x) x %in% names(data))
-````
-
-
-```{r}
-# Create interaction terms
-#for (year in year_dummies) {
-  #data[paste("BlueCollar", year, sep = "_")] <- data$BlueCollar * data[, year]}
-````
-
-# First try DiD
-```{r}
-# summary(lm(dbo_tot_pc~factor(year)*industry+factor(year)+factor(occ)+waterwork_pc+sewage_pc+i_urb_pc, data = data))
-````
-
-# Trying to make the data balanced to maybe solve the error of "duplicate couples"
-
-```{r}
-#balanced_data <- make.pbalanced(data, index = c("id_occ", "year")) # district by occupation
-````
-
-```{r}
-# summary(plm(dbo_tot_pc~factor(year)*industry+factor(year)+factor(occ)+waterwork_pc+sewage_pc+i_urb_pc, data = data))
-
-dbo_tot_pc_did <- plm(dbo_tot_pc ~ industry*factor(year, exclude = 1884) + factor(year) + factor(occ) + i_urb_pc + waterwork_pc + sewage_pc,
-                    data = data_BHI,
-                    index = c("id_occ", "id_year"), # a character vector of length two containing the names of the individual and the time index
-                    model = "within", # or "pooling" or "random" or "fd" or "between"
-                    effect = "twoways"
-                  )
-
-summary(dbo_tot_pc_did)
-
-# print summary using robust standard errors
-#coeftest(dbo_tot_pc_did, vcov. = vcovHC, type = "HC1")
-````
-
-```{r}
-fixef(dbo_tot_pc_did)
- ````
-
-# test 
-```{r}
-any(table(data$industry, data$year) > 1)
-````
-
-# Second try DiD
-```{r}
-# Convert to panel data
-pdata <- pdata.frame(data, index = c("occ", "RB", "year"))
-
-# Model with fixed effects
-model <- plm(dbo_tot_pc ~ factor(year)*industry+occ*industry+waterwork_pc*industry+sewage_pc*industry+i_urb_pc*industry, data = pdata, 
-             model = "within", effect = "twoways")
-
-summary(model)
-````
-
-
-# Plot timeseries dbo_tot_pc and year
-```{r}
-
-````
-
-
+#to be put somewhere / to be used
 ```{r}
 deathrate_year_means <- aggregate(dbo_tot_pc~year, data = data, FUN = mean)
 
@@ -194,84 +80,87 @@ ggplot(mean_dbo_tot_pc, aes(x = year, y = dbo_tot_pc)) +
 
 ```
 
+# Figure 1
+Long-run development of mortality in Prussia.
+The figure shows the crude death rate defined as the total number of deaths per year per 1,000 people.
+The vertical bar indicates the introduction of BHI in 1884.
 ```{r}
 library(ggplot2)
-
-# Calculate the mean dbo_tot_pc per year and industry
-mean_dbo_tot_pc <- aggregate(dbo_tot_pc ~ year + industry, data = data, FUN = mean)
-
-# Create a scatter plot with different colors for each industry level
-ggplot(mean_dbo_tot_pc, aes(x = year, y = dbo_tot_pc, color = factor(industry))) +
+# Create a scatter plot of crude death rate over time
+ggplot(data_BHI, aes(x = year, y = dbo_tot_pc)) +
   geom_point() +
-  labs(title = "Time Series Plot of Mean dbo_tot_pc by Industry",
+  geom_vline(xintercept = 1884, linetype = "dashed", color = "red") +
+  labs(title = "Long-run Development of Mortality in Prussia",
        x = "Year",
-       y = "Mean dbo_tot_pc",
-       color = "Industry") +
+       y = "Crude Death Rate") +
   theme_minimal()
-````
 
+```
+
+
+# Figure 2
+Expansion of Health Insurance in Prussia.
+The figure shows the share of health insured in the total population per year.
+Data refer to Prussia within its respective borders.
+Insurance benefits vary pre- and post-1884.
+The vertical bar indicates the introduction of BHI in 1884.
+
+
+
+# Figure 3
+Crude death rates by sector (blue collar and public servants).
+The figure shows district- level mean mortality, in deaths per 1,000,
+across blue-collar occupations and public servants.
+Following a difference-in-differences logic,
+the counterfactual is computed by parallel-shifting the trend
+of the public servants up to the blue-collar workers level in 1884.
+The vertical bar indicates the introduction of BHI in 1884.
+## First about the counterfactual line
 ```{r}
-library(ggplot2)
+library(dplyr)
 
-# Calculate the mean dbo_tot_pc per year and industry
-mean_dbo_tot_pc <- aggregate(dbo_tot_pc ~ year + industry, data = data, FUN = mean)
+# Generate temporary variables
+data_BHI <- data_BHI %>%
+  mutate(bluecollar1884 = ifelse(industry == 1 & year == 1884, dbo_tot_pc, NA),
+         public1884 = ifelse(industry == 0 & year == 1884, dbo_tot_pc, NA))
 
-# Create a scatter plot with different colors for each industry level
-ggplot(mean_dbo_tot_pc, aes(x = year, y = dbo_tot_pc, color = factor(industry))) +
-  geom_point() +
-  geom_line(aes(group = industry), linetype = "dashed") +
-  labs(title = "Time Series Plot of Mean dbo_tot_pc by Industry",
-       x = "Year",
-       y = "Mean dbo_tot_pc",
-       color = "Industry") +
-  theme_minimal()
+# Generate maximum values
+dbo_tot_bluecollar1884 <- max(data_BHI$bluecollar1884, na.rm = TRUE)
+dbo_tot_public1884 <- max(data_BHI$public1884, na.rm = TRUE)
 
-````
+# Generate counterfactual variable
+data_BHI <- data_BHI %>%
+  mutate(counterfactual = ifelse(industry == 0 & year >= 1884, 
+                                 dbo_tot_pc + dbo_tot_bluecollar1884 - dbo_tot_public1884, NA))
 
-```{r}
-library(ggplot2)
+# Drop temporary variables and max value variables
+#data_BHI <- data_BHI %>%
+  #select(-bluecollar1884, -public1884)
 
-# Calculate the mean dbo_tot_pc per year and industry
-mean_dbo_tot_pc <- aggregate(dbo_tot_pc ~ year + industry, data = data, FUN = mean)
-
-# Create a scatter plot with different colors for each industry level
-ggplot(mean_dbo_tot_pc, aes(x = year, y = dbo_tot_pc, color = factor(industry))) +
-  geom_point() +
-  geom_line(aes(group = industry), linetype = "dashed") +
-  ggeom_vline(xintercept = 1884, linetype = "dashed", color = "black") +
-  labs(title = "Time Series Plot of Mean dbo_tot_pc by Industry",
-       x = "Year",
-       y = "Mean dbo_tot_pc",
-       color = "Industry") +
-  theme_minimal()
-````
-
-```{r}
-library(ggplot2)
-
-# Calculate the mean dbo_tot_pc per year and industry
-mean_dbo_tot_pc <- aggregate(dbo_tot_pc ~ year + industry, data = data, FUN = mean)
-
-# Convert the year variable to numeric
-mean_dbo_tot_pc$year <- as.numeric(as.character(mean_dbo_tot_pc$year))
-
-# Create a scatter plot with different colors for each industry level
-ggplot(mean_dbo_tot_pc, aes(x = year, y = dbo_tot_pc, color = factor(industry))) +
-  geom_point() +
-  geom_line(aes(group = industry), linetype = "dashed") +
-  geom_vline(xintercept = 1884, linetype = "dashed", color = "black", size = 0.5) +
-  labs(title = "Development of Mean Death Rate by Industry",
-       x = "Year",
-       y = "Mean Death Rate",
-       color = "Industry") +
-  theme_minimal()
 ```
 
 ```{r}
 library(ggplot2)
 
+# Plot the counterfactual variable over time
+counterfactual_plot <- ggplot(data_BHI, aes(x = year, y = counterfactual)) +
+  geom_line(color = "grey", size = 1.5) +
+  labs(title = "Counterfactual Over Time",
+       x = "Year",
+       y = "Counterfactual") +
+  theme_minimal()
+
+
+counterfactual_plot
+````
+
+## Now about the plot
+
+```{r}
+library(ggplot2)
+
 # Calculate the mean dbo_tot_pc per year and industry
-mean_dbo_tot_pc <- aggregate(dbo_tot_pc ~ year + industry, data = data, FUN = mean)
+mean_dbo_tot_pc <- aggregate(dbo_tot_pc ~ year + industry, data = data_BHI, FUN = mean)
 
 # Convert the year variable to numeric
 mean_dbo_tot_pc$year <- as.numeric(as.character(mean_dbo_tot_pc$year))
@@ -288,7 +177,115 @@ plot <- ggplot(mean_dbo_tot_pc, aes(x = year, y = dbo_tot_pc, color = factor(ind
                      labels = c("Blue Collar", "Public Servant")) +
   theme_minimal()
 
+plot 
 # Save the plot as a PNG file
 ggsave("plot.png", plot, width = 8, height = 6, dpi = 300)
 
 ```
+
+```{r}
+library(ggplot2)
+
+# Calculate the mean dbo_tot_pc per year and industry
+mean_dbo_tot_pc <- aggregate(dbo_tot_pc ~ year + industry, data = data_BHI, FUN = mean)
+
+# Convert the year variable to numeric
+mean_dbo_tot_pc$year <- as.numeric(as.character(mean_dbo_tot_pc$year))
+
+# Create a scatter plot with different colors for each industry level
+plot <- ggplot(mean_dbo_tot_pc, aes(x = year, y = dbo_tot_pc, color = factor(industry))) +
+  geom_point() +
+  geom_line(aes(group = industry), linetype = "dashed") +
+  geom_line(data = data_BHI, aes(x = year, y = counterfactual), color = "grey", size = 1.5) +
+  geom_vline(xintercept = 1884, linetype = "dashed", color = "black", size = 1.5) +
+  labs(title = "Development of Mean Death Rate by Industry",
+       x = "Year",
+       y = "Mean dbo_tot_pc") +
+  scale_color_manual(values = c("blue", "black"),
+                     labels = c("Blue Collar", "Public Servant")) +
+  theme_minimal()
+
+# show the plot
+plot
+````
+
+# First try DiD
+
+## Create dichotomous BlueCollar variable
+```{r}
+data$BlueCollar <- ifelse(data$industry == 1, 1, 0)
+```
+
+Check if BlueCollar variable is correct
+```{r}
+"BlueCollar" %in% names(data)  # Should return TRUE
+is.numeric(data$BlueCollar)  # Should return TRUE
+```
+
+
+```{r}
+dbo_tot_pc_did <- plm(dbo_tot_pc ~ industry*factor(year, exclude = 1884) + industry + factor(year) + RB,
+                    data = data_BHI,
+                    index = c("id_occ", "id_year"), # individual and the time index
+                    model = "within", # or "pooling" or "random" or "fd" or "between"
+                    effect = "twoways"
+                  )
+
+summary(dbo_tot_pc_did)
+````
+
+```{r}
+# Identify the base coefficient for year 1884
+base_coef <- dbo_tot_pc_did[data_BHI$Year == 1884, "Coef"]
+
+# Subtract the base coefficient from all other years' coefficients
+base_coef$Normalized_Coef <- dbo_tot_pc_did$Coef - base_coef
+
+# Base R plot with normalized coefficients
+plot(data_BHI$Year, base_coef$Normalized_Coef, type='b',
+     main='Normalized Year Coefficients', xlab='Year', ylab='Normalized Coefficient')
+````
+
+```{r}
+# Extract coefficients and their standard errors
+model_coef <- coef(summary(dbo_tot_pc_did))
+
+# Create dataframe for the plot
+df_coef <- data.frame(
+  Year = as.numeric(gsub("industry:factor\\(year\\)", "", rownames(model_coef))),
+  Coef = model_coef[, "Estimate"],
+  StdErr = model_coef[, "Std. Error"]
+)
+
+# Keep only year factors
+df_coef <- df_coef[grepl("industry:factor\\(year\\)", rownames(model_coef)), ]
+
+# Normalize coefficients
+base_coef <- df_coef[df_coef$Year == 1884, "Coef"]
+df_coef$Normalized_Coef <- df_coef$Coef - base_coef
+
+# Calculate confidence intervals (at 95% confidence level)
+df_coef$CI_lower <- df_coef$Normalized_Coef - 1.96*df_coef$StdErr
+df_coef$CI_upper <- df_coef$Normalized_Coef + 1.96*df_coef$StdErr
+
+# Load the necessary library
+library(ggplot2)
+
+# Ggplot with normalized coefficients and confidence intervals
+ggplot(df_coef, aes(x=Year, y=Normalized_Coef)) + 
+  geom_ribbon(aes(ymin=CI_lower, ymax=CI_upper), alpha=0.2) +  # Confidence intervals
+  geom_line() + geom_point() +
+  ggtitle('Normalized Year Coefficients with Confidence Intervals') + 
+  xlab('Year') + ylab('Normalized Coefficient')
+```
+
+```{r}
+fixef(dbo_tot_pc_did)
+ ````
+
+# test 
+```{r}
+any(table(data$industry, data$year) > 1)
+````
+
+
