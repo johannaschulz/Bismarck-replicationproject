@@ -1,0 +1,624 @@
+---
+title: "Driva et al. Bismarck Replication"
+author: "Till Schickle"
+date: "2023-06-02"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# Packages
+
+```{r}
+library(tidyverse)
+library(haven)
+library(plm)
+library(modelsummary)
+library(lmtest)
+library(gridExtra)
+library(gridtext)
+library(stargazer)
+library(webshot)
+library(tibble)
+library(dplyr)
+library(gt)
+```
+
+
+# DiD
+## Data
+
+```{r load-libraries & data, message=FALSE, warning=FALSE}
+
+#load data
+#pick path
+path_data <- file.choose()
+df_bismarck_raw <- read_dta(path_data)
+
+#clean data up, rename columns more intuitively
+df_bismarck <- df_bismarck_raw %>%
+  rename(bluecollar = industry,
+         district_id = code,
+         district_name = RB,
+         deaths_tot = dbo_tot,
+         deaths_am = dbo_am,
+         deaths_af = dbo_af,
+         deaths_km = dbo_km,
+         deaths_kf = dbo_kf,
+         deaths_tot_pc = dbo_tot_pc,
+         deaths_am_pc = dbo_am_pc,
+         deaths_af_pc = dbo_af_pc,
+         deaths_km_pc = dbo_km_pc,
+         deaths_kf_pc = dbo_kf_pc,
+         urb_rate = i_urb_pc)
+
+#create panal data set
+pdf_bismarck <- pdata.frame(df_bismarck, index = c("id_occ", "id_year"))
+
+#delete unneeded data sets
+rm(list = c("df_bismarck_raw", "df_bismarck"))
+#delete path var
+rm("path_data")
+```
+
+## Parallel trends
+```{r plotting parallel trends,message=FALSE, warning=FALSE}
+#creating df with data for trend plot
+trends <- aggregate(deaths_tot_pc~year+bluecollar, data = pdf_bismarck, FUN = mean)
+#error message w/o this - unclear why it is necessary
+trends$year <- as.numeric(trends$year)
+trends$bluecollar <- as.factor(trends$bluecollar)
+#assign names instead of numbers
+trends$bluecollar <- ifelse(trends$bluecollar==0,"public servant", "blue collar")
+#create new rows for counterfactual
+trends <- rbind(trends, data.frame(year = seq(1877,1900), 
+                                   bluecollar = "blue collar - counterfactual", 
+                                   deaths_tot_pc = 0))
+#assign the correct values
+#up to and including 1884 values are equal to bluecollar
+trends$deaths_tot_pc[trends$bluecollar == "blue collar - counterfactual" & 
+                      trends$year <= 1884] <- trends$deaths_tot_pc[ 
+                        trends$bluecollar == "blue collar" &
+                        trends$year <= 1884]
+
+#from 1885 on the values are that of public servant + 
+#the difference between bluecollar and public servant in 1884
+
+#calc difference between mean death rate in 1884
+diff_1884 = trends$deaths_tot_pc[trends$year == 1884 & trends$bluecollar == "blue collar"] - 
+  trends$deaths_tot_pc[trends$year == 1884 & trends$bluecollar == "public servant"]
+
+#assign the values for post 1884
+trends$deaths_tot_pc[trends$bluecollar == "blue collar - counterfactual" & 
+                      trends$year >= 1885] <- trends$deaths_tot_pc[trends$bluecollar == "public servant" & 
+                      trends$year >= 1885] + diff_1884
+
+#plotting
+ggplot(trends, aes(x = year, y = deaths_tot_pc, color = bluecollar, group = bluecollar)) +
+  geom_line() + 
+  #draw blue collar line on top of counterfactual line
+  geom_line(data = subset(trends, 
+                          bluecollar == "blue collar"), 
+                          color = "blue", 
+                          size = 1) + 
+  labs(x = "Time", y = "Mean Crude Death Rate", title = "Development of Mean Crude Death Rate by Sector") + 
+  scale_color_manual(values = c("blue", "gray", "red")) +
+  geom_vline(xintercept = 1884, linetype = "dashed", color = "black") + #add the vertical line in 1884
+  theme_minimal() + #no gray background
+  theme(plot.title = element_text(hjust = 0.5)) +
+  guides(linetype = "none") + #deleting legend for linetypes
+  theme(legend.position = "bottom",
+        legend.title = element_blank()) #adjust design of legend
+
+#delete unneeded df & variable
+rm(list = c("diff_1884", "trends"))
+```
+
+## Baseline model
+```{r,message=FALSE, warning=FALSE}
+
+#to use 1884 as baseline year, setting year to 0 if year is 1884
+pdf_bismarck$year_normalized <- ifelse(pdf_bismarck$year == 1884, 
+                                      0, 
+                                      pdf_bismarck$year)
+
+#run regression
+model_did_baseline <- plm(deaths_tot_pc ~ factor(year_normalized) * bluecollar, 
+                    data = pdf_bismarck,
+                    model = "within")
+
+summary(model_did_baseline)
+
+#extract coefficient estimates
+coefficients <- coef(model_did_baseline)
+#keep only last 23 entries (relevant estimates of interaction term)
+coefficients <- coefficients[-(1:(length(coefficients)-23))]
+
+#clustered standard errors
+clustered_sd <- coeftest(model_did_baseline, 
+                         vcov=vcovHC(model_did_baseline,
+                                     type="HC0",
+                                     cluster="group"))
+std_errors <- (clustered_sd)[, 2]
+#keep only last 23 entries (relevant estimates of interaction term)
+std_errors <- std_errors[-(1:(length(std_errors)-23))]
+
+# create data frame with values and names of coefficients
+df_coef <- data.frame(coefficient_name = c(1877:1883, 1885:1900), 
+                      coefficient = coefficients,
+                      standard_error = std_errors)
+
+# insert the row between 1883 and 1885
+df_coef <- rbind(df_coef[1:7,], 
+                 data.frame(coefficient_name = 1884, 
+                           coefficient = 0, 
+                           standard_error = 0), 
+                 df_coef[8:nrow(df_coef),])
+
+
+ggplot(data = df_coef,
+       aes(x = coefficient_name, 
+           y = coefficient)) +
+  geom_point() +
+  #95% conf. interval
+  geom_errorbar(
+    aes(ymin = coefficient - 1.96 * standard_error, 
+        ymax = coefficient + 1.96 * standard_error), 
+    width = 0.2, 
+    color = "blue") +
+  #90% conf. interval
+  geom_errorbar(
+    aes(ymin = coefficient - 1.645 * standard_error, 
+        ymax = coefficient + 1.645 * standard_error), 
+    width = 0.2, 
+    color = "grey") +
+  theme_minimal() +
+  geom_hline(yintercept = 0, 
+             linetype = "dashed", 
+             color = "red") +
+  geom_vline(xintercept = 1884, 
+             linetype = "dashed", 
+             color = "red") +
+  scale_x_continuous(
+    breaks = c(1880, 1884, 1890, 1900),
+    labels = c("1880", "1884", "1890", "1900")) +
+  scale_y_continuous(
+    breaks = c(2, 0, -2, -4),
+    labels = c(2, 0, -2, -4)) +
+  ylim(-4, 2) +
+  labs(x = NULL, y = "Coefficient Estimate")
+
+```
+
+## Heterogeneity age & gender
+There might be heterogeneous effects for children or women (Figure 5 in paper)
+
+```{r heterogeneity age gender, warning=FALSE, message=FALSE}
+
+'run the baseline model but with different outcome variables: 
+death rates of children or women'
+
+variables <- c("deaths_am_pc", "deaths_af_pc", "deaths_km_pc", "deaths_kf_pc")
+
+#loop through the four variables, run regression and create plot for each
+for (i in 1:length(variables)) {
+  
+  #regression formula
+  formula <- paste(variables[i], 
+                  "factor(year_normalized) * bluecollar", 
+                  sep = "~",
+                  collapse = "+")
+  
+  #specify model name
+  model_name <- paste("model", 
+                      variables[i], 
+                      sep = "_", 
+                      collapse = "+")
+  
+  #run the regression
+  model <- plm(formula = formula, 
+             data = pdf_bismarck,
+             model = "within")
+  
+  #assign name to model
+  assign(model_name, model)
+  
+  #extract coefficient estimates
+  coefficients <- coef(model)
+  #keep only last 23 entries (relevant estimates of interaction term)
+  coefficients <- coefficients[-(1:(length(coefficients)-23))]
+  
+  #clustered standard errors
+  clustered_sd <- coeftest(model, 
+                           vcov=vcovHC(model,
+                                       type="HC0",
+                                       cluster="group"))
+  std_errors <- (clustered_sd)[, 2]
+  #keep only last 23 entries (relevant estimates of interaction term)
+  std_errors <- std_errors[-(1:(length(std_errors)-23))]
+  
+  # create data frame with values and names of coefficients
+  df_coef <- data.frame(coefficient_name = c(1877:1883, 1885:1900), 
+                        coefficient = coefficients,
+                        standard_error = std_errors)
+  
+  # insert the row between 1883 and 1885
+  df_coef <- rbind(df_coef[1:7,], 
+                   data.frame(coefficient_name = 1884, 
+                             coefficient = 0, 
+                             standard_error = 0), 
+                   df_coef[8:nrow(df_coef),])
+
+  #create plot
+  plot <- ggplot(data = df_coef,
+                 aes(x = coefficient_name, 
+                     y = coefficient)) + 
+    geom_point() +
+    #95% conf. interval
+    geom_errorbar(
+      aes(ymin = coefficient - 1.96 * standard_error, 
+          ymax = coefficient + 1.96 * standard_error), 
+      width = 0.2, 
+      color = "blue") +
+    theme_minimal() +
+    geom_hline(yintercept = 0, 
+               linetype = "dashed", 
+               color = "red") +
+    geom_vline(xintercept = 1884, 
+               linetype = "dashed", 
+               color = "red") +
+    scale_x_continuous(
+      breaks = c(1880, 1884, 1890, 1900),
+      labels = c("1880", "1884", "1890", "1900")) +
+    scale_y_continuous(
+      breaks = c(2, 0, -2, -4),
+      labels = c(2, 0, -2, -4)) +
+    ylim(-4, 2) +
+    theme(plot.title = element_text(hjust = 0.5)) + 
+    labs(x = NULL, y = NULL)
+  
+  #name plot
+  plot_name <- paste("plot", 
+                     variables[i],
+                     sep = "_", 
+                     collapse = "+")
+  
+  #assign name to plot
+  assign(plot_name, plot)
+  
+}
+plot_deaths_am_pc <- plot_deaths_am_pc + labs(title = "Adult Males")
+plot_deaths_af_pc <- plot_deaths_af_pc + labs(title = "Adult Females")
+plot_deaths_km_pc <- plot_deaths_km_pc + labs(title = "Boys < 14")
+plot_deaths_kf_pc <- plot_deaths_kf_pc + labs(title = "Girls < 14")
+
+#create four plots in a grid to show heterogeneous effects
+combined_plot <- grid.arrange(plot_deaths_am_pc, 
+                              plot_deaths_af_pc, 
+                              plot_deaths_km_pc,
+                              plot_deaths_kf_pc, 
+                              nrow = 2, 
+                              ncol = 2,
+                              left = richtext_grob("Coefficient Estimates", rot = 90))
+
+
+```
+
+## Heterogeneity industries
+
+The effects might be confounded by wage effects in the industries. A consistent effect across all industries would serve as evidence against this caveat.
+
+ ```{r}
+# 
+# 'run the baseline model but with different outcome variables: 
+# industry specific death rates'
+# 
+# #
+# 
+# #loop through the 13 industries, run regression and create plot for each
+# for (i in 1:13) {
+#   
+#   #regression formula
+#   formula <- paste("deaths_tot_pc", 
+#                   "factor(year_normalized)", 
+#                   sep = "~",
+#                   collapse = "+")
+#   
+#   #specify model name
+#   model_name <- paste("model", 
+#                       i, 
+#                       sep = "_", 
+#                       collapse = "+")
+#   
+#   subset_data <- subset(panel_data, occ == i)
+# 
+#   #run the regression
+#   reg <- plm(formula = deaths_tot_pc ~ bluecollar*factor(year_normalized), 
+#             data = subset_data, 
+#             model = "within")
+#   
+#   summary(reg)
+#   
+#   #extract coefficient estimates
+#   coefficients <- coef(reg)
+#   
+#   #keep only the last 23 values which are the year coefficients
+#   coefficients <- coefficients[(length(coefficients)-22):length(coefficients)]
+#   
+#   #clustered standard errors
+#   clustered_sd <- coeftest(reg, 
+#                            vcov = vcovHC(reg,
+#                                          type="HC0",
+#                                          cluster="group"))
+#   
+#   #extract standard errors
+#   std_errors <- (clustered_sd)[, 2]
+#   #keep only last 23
+#   std_errors <- std_errors[(length(std_errors)-22):length(std_errors)]
+#   
+#   #coefficient names are the years 
+#   coef_names <- c(1877:1883, 1885:1900)
+#   
+#   #create data frame with values and names of coefficients
+#   coef_df <- data.frame(coefficient_name = coef_names, 
+#                         coefficient = coefficients,
+#                         standard_error = std_errors)
+# 
+#   #create row for year 1884 with the coefficient 0
+#   new_row_1884 <- data.frame(coefficient_name = 1884, 
+#                              coefficient = 0, 
+#                              standard_error = 0)
+# 
+#   #insert the row between 1883 and 1885
+#   coef_df <- rbind(coef_df[1:7,], 
+#                    new_row_1884, 
+#                    coef_df[8:nrow(coef_df),])
+#   
+#   #create plot
+#   plot <- ggplot(data = coef_df,
+#                  aes(x = coefficient_name, 
+#                      y = coefficient)) + 
+#     geom_point() +
+#     #95% conf. interval
+#     geom_errorbar(
+#       aes(ymin = coefficient - 1.96 * standard_error, 
+#           ymax = coefficient + 1.96 * standard_error), 
+#       width = 0.2, 
+#       color = "blue") +
+#     theme_minimal() +
+#     geom_hline(yintercept = 0, 
+#                linetype = "dashed", 
+#                color = "red") +
+#     geom_vline(xintercept = 1884, 
+#                linetype = "dashed", 
+#                color = "red") +
+#     scale_x_continuous(
+#       breaks = c(1880, 1884, 1890, 1900),
+#       labels = c("'80", "'84", "'90", "1900")) +
+#     #scale_y_continuous(
+#     #  breaks = c(5, 0, -5, -10),
+#     #  labels = c(5, 0, -5, -10)) +
+#     ylim(-10, 5) +
+#     theme(plot.title = element_text(hjust = 0.5)) + 
+#     labs(x = NULL, y = NULL)
+#   
+#   #name plot
+#   plot_name <- paste("plot", 
+#                      i,
+#                      sep = "_", 
+#                      collapse = "+")
+#   
+#   assign(plot_name, plot)
+#   
+# }
+# 
+# #create four plots in a grid to show heterogeneous effects
+# combined_plot <- grid.arrange(plot_1, 
+#                               plot_2, 
+#                               plot_3,
+#                               plot_4,
+#                               plot_5,
+#                               plot_6,
+#                               plot_7,
+#                               plot_8,
+#                               plot_9,
+#                               nrow = 3, 
+#                               ncol = 3,
+#                               left = richtext_grob("Coefficient Estimates", rot = 90))
+# 
+#   
+ ```
+
+
+# County Fixed Effects
+
+Main issue with DiD is that selection into occupation groups after 1884 cannot be excluded.
+Both selection that would lead to upward bias (sicker, more care needing people select into bluecollar occupations to get insurance) as well as selection leading to downward bias (younger people select into bluecollar occupations as the job becomes more attractive due to insurance) are possible.
+Thus, need different approach such that one can fix treatment assignment/intensity pre treatment: county fixed effects.
+
+## Data
+
+```{r}
+#load data
+#pick path for spec2 data
+path_data <- file.choose()
+df_bismarck_raw <- read_dta(path_data)
+
+#clean data up, rename columns more intuitively
+df_bismarck <- df_bismarck_raw %>%
+  rename(period1875 = yr1,
+         period1880 = yr2,
+         period1885 = yr3,
+         period1890 = yr4,
+         period1895 = yr5,
+         period1900 = yr6,
+         treat1875 = b_industry_w_pc1875,
+         treat1880 = b_industry_w_pc1880,
+         treat1885 = b_industry_w_pc1885,
+         treat1890 = b_industry_w_pc1890,
+         treat1895 = b_industry_w_pc1895,
+         treat1900 = b_industry_w_pc1900,
+         deaths_tot = dth_pc,
+         county = code1867,
+         bluecollar_1882 = b_industry_w_pc,
+         deaths_male = dthm_pc,
+         deaths_female = dthf_pc,
+         deaths_infants_tot = dth1_pb,
+         deaths_infants_leg = dthleg_pb,
+         deaths_infants_illeg = dthbas_pb,
+         bluecollar_1882_self = b_industry_self_pc,
+         public_1882 = e_public_w_pc)
+
+#create panal data set
+pdf_bismarck <- pdata.frame(df_bismarck, index = c("county", "year"))
+
+#delete unneeded data sets
+rm(list = c("df_bismarck_raw", "df_bismarck"))
+#delete path var
+rm("path_data")
+
+
+```
+
+
+## Model
+
+```{r}
+
+  # create new year variable which is 0 whenever year = 1880 as this is the 
+  # omitted reference period
+  pdf_bismarck$year_normalized <- ifelse(pdf_bismarck$year == 1880, 
+                                         0, 
+                                         pdf_bismarck$year)
+  
+
+  ### run regressions
+  # baseline fixed effects model
+  model_fe_baseline <- plm(formula = deaths_tot ~ 
+                             bluecollar_1882*factor(year_normalized),
+                           data = pdf_bismarck,
+                           model = "within")
+  
+  # create list of models and add baseline model
+  models <- list("Baseline" = model_fe_baseline)
+
+  
+  # list of dep. variables for models w/ controls
+  dep_vars <- c("deaths_tot",
+                "deaths_male",
+                "deaths_female",
+                "deaths_infants_tot",
+                "deaths_infants_leg",
+                "deaths_infants_illeg")
+  
+  # list of names for models
+  model_names <- c("Controls",
+                   "Males",
+                   "Females",
+                   "Infants",
+                   "Legitimate Infants",
+                   "Illegitimate Infants")
+  
+  # loop that runs the models w/ controls
+  for (i in 1:6) {
+    
+    formula <- paste(dep_vars[i], 
+                     "bluecollar_1882*factor(year_normalized) " %>%
+                       paste0("+ urb_pc + waterwork_pc + sewage_pc"),
+                     sep = "~")
+    
+    model <- plm(formula = formula,
+                 data = pdf_bismarck,
+                 model = "within")
+    
+    
+    models[[length(models) + 1]] <- model
+    names(models)[length(models)] <- model_names[i]
+    
+  }
+  
+  # placebo tests
+  # self-employed
+  model_fe_placebo_self <- plm(formula = deaths_tot ~ 
+                             bluecollar_1882_self*factor(year_normalized)+ 
+                               urb_pc + waterwork_pc + sewage_pc,
+                           data = pdf_bismarck,
+                           model = "within")
+  summary(model_fe_placebo_self)
+  
+  # create list of models and add baseline model
+  models[[length(models) + 1]] <- model_fe_placebo_self
+  names(models)[length(models)] <- "Placebo Self-Employed"
+
+  # public servants
+  model_fe_placebo_public <- plm(formula = deaths_tot ~ 
+                             public_1882*factor(year_normalized)+ 
+                               urb_pc + waterwork_pc + sewage_pc,
+                           data = pdf_bismarck,
+                           model = "within")
+  
+  # create list of models and add baseline model
+  models[[length(models) + 1]] <- model_fe_placebo_public
+  names(models)[length(models)] <- "Placebo Public Servants"
+  
+  # clustered standard erros
+  # function that calculates the clustered standard errors for the passed model 
+  vcov_sss_group <- function(model) {
+    vcovHC(model, type = "sss", cluster = "group")
+  }
+  
+    
+  # new 
+  rows <- tribble(~term, ~`[[1]]`, ~`[[2]]`, ~`[[3]]`, ~`[[4]]`, ~`[[5]]`, ~`[[6]]`, ~`[[7]]`, ~`[[8]]`, ~`[[9]]`,
+                  'Controls', 'No', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes',
+                  'County FE', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes',
+                  'Time FE', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes',
+                  'Counties', '441', '441', '441', '441', '441', '441', '441', '441', '441',
+                  'Periods', '6', '6', '6', '6', '6', '6', '6', '6', '6')
+
+  attr(rows, 'position') <- c(11, 12, 13, 15, 16)
+  
+  
+  # create regression table 
+  reg_table <- modelsummary(models,
+               vcov = vcov_sss_group,
+               #name all three different sets of coefficients the same such 
+               #that the table consists of only five rows of coefficients
+               coef_map = c('bluecollar_1882:factor(year_normalized)1' = 'Treat*1875', 
+                            'bluecollar_1882:factor(year_normalized)3' = 'Treat*1885',
+                            'bluecollar_1882:factor(year_normalized)4' = 'Treat*1890',
+                            'bluecollar_1882:factor(year_normalized)5' = 'Treat*1895',
+                            'bluecollar_1882:factor(year_normalized)6' = 'Treat*1900',
+                            'bluecollar_1882_self:factor(year_normalized)1' = 'Treat*1875', 
+                            'bluecollar_1882_self:factor(year_normalized)3' = 'Treat*1885',
+                            'bluecollar_1882_self:factor(year_normalized)4' = 'Treat*1890',
+                            'bluecollar_1882_self:factor(year_normalized)5' = 'Treat*1895',
+                            'bluecollar_1882_self:factor(year_normalized)6' = 'Treat*1900',
+                            'public_1882:factor(year_normalized)1' = 'Treat*1875', 
+                            'public_1882:factor(year_normalized)3' = 'Treat*1885',
+                            'public_1882:factor(year_normalized)4' = 'Treat*1890',
+                            'public_1882:factor(year_normalized)5' = 'Treat*1895',
+                            'public_1882:factor(year_normalized)6' = 'Treat*1900'),
+               gof_map = c("nobs", "r.squared"),
+               add_rows = rows,
+               output = "gt")
+  
+  reg_table <- reg_table %>%
+
+    # column labels
+    tab_spanner(label = 'Total Deathrate', columns = 2:3) %>%
+    tab_spanner(label = 'Heterogeneity Tests', columns = 4:8) %>%
+    tab_spanner(label = 'Placebo Tests', columns = 9:10)
+  
+  reg_table
+  
+  gtsave(reg_table, file = "fe_reg_table.docx")
+
+```
+
+## Robustness checks
+
+```{r}
+
+```
+
