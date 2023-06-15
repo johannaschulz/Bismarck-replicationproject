@@ -5,6 +5,23 @@ title: "Driva et al. Bismarck Replication"
 # Packages
 
 ```{r}
+install.packages("tidyverse")
+install.packages("haven")
+install.packages("plm")
+install.packages("modelsummary")
+install.packages("lmtest")
+install.packages("gridExtra")
+install.packages("gridtext")
+install.packages("stargazer")
+install.packages("webshot")
+install.packages("tibble")
+install.packages("dplyr")
+install.packages("gt")
+install.packages("ggplot2")
+```
+
+
+```{r}
 library(tidyverse)
 library(haven)
 library(plm)
@@ -17,25 +34,9 @@ library(webshot)
 library(tibble)
 library(dplyr)
 library(gt)
+library(ggplot2)
 ```
 
-```{r}
-install.packages(tidyverse)
-install.packages(haven)
-install.packages(plm)
-install.packages(modelsummary)
-install.packages(lmtest)
-install.packages(gridExtra)
-install.packages(gridtext)
-install.packages(stargazer)
-install.packages(webshot)
-install.packages(tibble)
-install.packages(dplyr)
-install.packages(gt)
-```
-
-```{r}
-```
 # Read the Dataset
 ```{r}
 rm(list = ls())
@@ -51,9 +52,7 @@ getwd()
 ```{r load-libraries & data, message=FALSE, warning=FALSE}
 
 #load data
-#pick path
-path_data <- file.choose()
-df_bismarck_raw <- read_dta(path_data)
+df_bismarck_raw <- haven::read_dta('BDH-Bismarck-JEEA-spec1.dta')
 
 #clean data up, rename columns more intuitively
 df_bismarck <- df_bismarck_raw %>%
@@ -77,8 +76,6 @@ pdf_bismarck <- pdata.frame(df_bismarck, index = c("id_occ", "id_year"))
 
 #delete unneeded data sets
 rm(list = c("df_bismarck_raw", "df_bismarck"))
-#delete path var
-rm("path_data")
 ```
 
 ## Parallel trends
@@ -134,6 +131,12 @@ ggplot(trends, aes(x = year, y = deaths_tot_pc, color = bluecollar, group = blue
 rm(list = c("diff_1884", "trends"))
 ```
 
+```{r}
+#save plot as png
+ggsave("parallel_trends.png", width = 10, height = 6, dpi = 300)
+```
+````
+
 ## Baseline model
 ```{r,message=FALSE, warning=FALSE}
 
@@ -175,7 +178,9 @@ df_coef <- rbind(df_coef[1:7,],
                            standard_error = 0), 
                  df_coef[8:nrow(df_coef),])
 
+````
 
+```{r}
 ggplot(data = df_coef,
        aes(x = coefficient_name, 
            y = coefficient)) +
@@ -210,6 +215,11 @@ ggplot(data = df_coef,
 
 ```
 
+```{r}
+#save plot as png
+ggsave("baseline_model.png", width = 10, height = 6, dpi = 300)
+```
+````
 ## Heterogeneity age & gender
 There might be heterogeneous effects for children or women (Figure 5 in paper)
 
@@ -322,6 +332,14 @@ combined_plot <- grid.arrange(plot_deaths_am_pc,
                               left = richtext_grob("Coefficient Estimates", rot = 90))
 
 
+```
+
+```{r}
+#save the individual plots as PNG files
+ggsave("Heterogeneity_AdultMales.png", plot_deaths_am_pc, width = 8, height = 6)
+ggsave("Heterogeneity_AdultFemales.png", plot_deaths_af_pc, width = 8, height = 6)
+ggsave("Heterogeneity_Boys.png", plot_deaths_km_pc, width = 8, height = 6)
+ggsave("Heterogeneity_Girls.png", plot_deaths_kf_pc, width = 8, height = 6)
 ```
 
 ## Heterogeneity industries
