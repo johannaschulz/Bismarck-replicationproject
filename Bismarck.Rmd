@@ -1,10 +1,5 @@
 ---
 title: "Driva et al. Bismarck Replication"
-author: "Till Schickle"
-date: "2023-06-02"
-output:
-  html_document: default
-  pdf_document: default
 ---
 
 # Packages
@@ -24,6 +19,31 @@ library(dplyr)
 library(gt)
 ```
 
+```{r}
+install.packages(tidyverse)
+install.packages(haven)
+install.packages(plm)
+install.packages(modelsummary)
+install.packages(lmtest)
+install.packages(gridExtra)
+install.packages(gridtext)
+install.packages(stargazer)
+install.packages(webshot)
+install.packages(tibble)
+install.packages(dplyr)
+install.packages(gt)
+```
+
+```{r}
+```
+# Read the Dataset
+```{r}
+rm(list = ls())
+
+WD_file = dirname(rstudioapi::getSourceEditorContext()$path)
+setwd(WD_file)
+getwd()
+````
 
 # DiD
 ## Data
