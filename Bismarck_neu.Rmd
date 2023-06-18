@@ -1,25 +1,13 @@
 ---
 title: "Driva et al. Bismarck Replication"
+author: "Till Schickle"
+date: "2023-06-02"
+output:
+  html_document: default
+  pdf_document: default
 ---
 
 # Packages
-
-```{r}
-install.packages("tidyverse")
-install.packages("haven")
-install.packages("plm")
-install.packages("modelsummary")
-install.packages("lmtest")
-install.packages("gridExtra")
-install.packages("gridtext")
-install.packages("stargazer")
-install.packages("webshot")
-install.packages("tibble")
-install.packages("dplyr")
-install.packages("gt")
-install.packages("ggplot2")
-```
-
 
 ```{r}
 library(tidyverse)
@@ -28,23 +16,15 @@ library(plm)
 library(modelsummary)
 library(lmtest)
 library(gridExtra)
+library(grid)
 library(gridtext)
 library(stargazer)
 library(webshot)
 library(tibble)
 library(dplyr)
 library(gt)
-library(ggplot2)
 ```
 
-# Read the Dataset
-```{r}
-rm(list = ls())
-
-WD_file = dirname(rstudioapi::getSourceEditorContext()$path)
-setwd(WD_file)
-getwd()
-````
 
 # DiD
 ## Data
@@ -52,7 +32,9 @@ getwd()
 ```{r load-libraries & data, message=FALSE, warning=FALSE}
 
 #load data
-df_bismarck_raw <- haven::read_dta('BDH-Bismarck-JEEA-spec1.dta')
+#pick path
+path_data <- file.choose()
+df_bismarck_raw <- read_dta(path_data)
 
 #clean data up, rename columns more intuitively
 df_bismarck <- df_bismarck_raw %>%
@@ -76,6 +58,8 @@ pdf_bismarck <- pdata.frame(df_bismarck, index = c("id_occ", "id_year"))
 
 #delete unneeded data sets
 rm(list = c("df_bismarck_raw", "df_bismarck"))
+#delete path var
+rm("path_data")
 ```
 
 ## Parallel trends
@@ -131,12 +115,6 @@ ggplot(trends, aes(x = year, y = deaths_tot_pc, color = bluecollar, group = blue
 rm(list = c("diff_1884", "trends"))
 ```
 
-```{r}
-#save plot as png
-ggsave("parallel_trends.png", width = 10, height = 6, dpi = 300)
-```
-````
-
 ## Baseline model
 ```{r,message=FALSE, warning=FALSE}
 
@@ -178,9 +156,7 @@ df_coef <- rbind(df_coef[1:7,],
                            standard_error = 0), 
                  df_coef[8:nrow(df_coef),])
 
-````
 
-```{r}
 ggplot(data = df_coef,
        aes(x = coefficient_name, 
            y = coefficient)) +
@@ -215,19 +191,13 @@ ggplot(data = df_coef,
 
 ```
 
-```{r}
-#save plot as png
-ggsave("baseline_model.png", width = 10, height = 6, dpi = 300)
-```
-
-
 ## Heterogeneity age & gender
 There might be heterogeneous effects for children or women (Figure 5 in paper)
 
 ```{r heterogeneity age gender, warning=FALSE, message=FALSE}
 
-#run the baseline model but with different outcome variables: 
-death rates of children or women
+'run the baseline model but with different outcome variables: 
+death rates of children or women'
 
 variables <- c("deaths_am_pc", "deaths_af_pc", "deaths_km_pc", "deaths_kf_pc")
 
@@ -331,48 +301,50 @@ combined_plot <- grid.arrange(plot_deaths_am_pc,
                               nrow = 2, 
                               ncol = 2,
                               left = richtext_grob("Coefficient Estimates", rot = 90))
+
+ggsave("heterogeneity_gender_age.png", combined_plot)
+
+
 ```
 
-# save combined plot as png
-```{r}
-ggsave("combined_plot_age_gender.png", combined_plot, width = 8, height = 6)
-````
-
-
 ## Heterogeneity industries
+
 The effects might be confounded by wage effects in the industries. A consistent effect across all industries would serve as evidence against this caveat.
 
+
 ```{r}
-pdf_bismarck$occ_normalized <- ifelse(pdf_bismarck$occ == "14", 
+
+  
+  pdf_bismarck$occ_normalized <- ifelse(pdf_bismarck$occ == "14", 
                                       0, 
                                       pdf_bismarck$occ)
   
-#run regression
-model_did_heterogeneity_industries <- plm(deaths_tot_pc ~ factor(year_normalized) * factor(occ_normalized), 
+  #run regression
+  model_did_heterogeneity_industries <- plm(deaths_tot_pc ~ factor(year_normalized) * factor(occ_normalized), 
                       data = pdf_bismarck,
                       model = "within")
 
-#extract coefficient estimates
-coefficients <- coef(model_did_heterogeneity_industries)
+  #extract coefficient estimates
+  coefficients <- coef(model_did_heterogeneity_industries)
   
-#clustered standard errors
-clustered_sd <- coeftest(model_did_heterogeneity_industries, 
+  #clustered standard errors
+  clustered_sd <- coeftest(model_did_heterogeneity_industries, 
                            vcov=vcovHC(model_did_heterogeneity_industries,
                                        type="HC0",
                                        cluster="group"))
   
-#names of industries
-industries = c("Mining & turf", "Minerals", "Metals", "Machinery", 
+  #names of industries
+  industries = c("Mining & turf", "Minerals", "Metals", "Machinery", 
                  "Chemicals", "Fossil fuels", "Textiles", "Paper & leather", 
                  "Wood", "Food", "Appareal & cleaning", "Construction", 
                  "Printing")
-
-
-for (i in 1:13) {
+  
+  
+  for (i in 1:13) {
     #calculate where the relevant coefficients and std. errors are in the vectors
     start = i*23+1
     end = i*23+23
-    #create data frame with coefficients
+    #crate data frame with coefficients
     df <- data.frame(coefficient_name = c(1877:1883, 1885:1900),
                      coefficient = coefficients[start:end],
                      standard_error = clustered_sd[start:end,2])
@@ -396,6 +368,7 @@ for (i in 1:13) {
         width = 0, 
         color = "blue") +
       theme_minimal() +
+      theme(plot.title = element_text(size = 10, hjust = 0.5)) +
       geom_hline(yintercept = 0, 
                  linetype = "dashed", 
                  color = "red") +
@@ -403,36 +376,38 @@ for (i in 1:13) {
                  linetype = "dashed", 
                  color = "red") +
       ylim(-11, 7) +
-      labs(x=NULL, y=NULL, title = industries[i])
+      labs(x=NULL, y=NULL, title = industries[i]) +
+      scale_x_continuous(
+        breaks = c(1879, 1884, 1889, 1894, 1899),
+        labels = c("79", "84", "89", "94", "99"))
     
     #assign name to plot
-    plot_name = paste("plot", industries[i], sep = "_")
+    plot_name = paste("plot",
+                      industries[i],
+                      sep = "_",
+                      collapse = "+")
     assign(plot_name, plot)
-}
-
-#create four plots in a grid to show heterogeneous effects
-combined_plot <- grid.arrange(
-  plot_Mining,
-  plot_Minerals,
-  plot_Metals,
-  plot_Machinery,
-  plot_Textiles,
-  plot_Paper,
-  plot_Wood,
-  plot_Food,
-  plot_Appareal,
-  plot_Construction,
-  ncol = 5,
-  nrow = 2,
-  left = richtext_grob("Coefficient Estimates", rot = 90),
-  widths = rep(1, 5),
-  heights = rep(1, 2)
-)
-
-````
-
-```{r}
-#save plot as png
+    
+  }
+  
+  #create four plots in a grid to show heterogeneous effects
+  combined_plot <- grid.arrange(`plot_Mining & turf`,
+               plot_Minerals,
+               plot_Metals,
+               plot_Machinery,
+               plot_Textiles,
+               `plot_Paper & leather`,
+               plot_Wood,
+               plot_Food,
+               `plot_Appareal & cleaning`,
+               plot_Construction,
+               ncol = 5,
+               nrow = 2,
+               left = richtext_grob("Coefficient Estimates", rot = 90))
+  
+  
+  ggsave("heterogeneity_industry.png", combined_plot, width = 15, height = 8, units = "cm")
+  
 
 ```
 
