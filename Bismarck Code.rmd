@@ -12,7 +12,7 @@ library(stargazer)
 library(labelled)
 #install.packages("plm")
 library(plm)
-#install.packages("fastDummies") 
+#install.packages("svglite") 
 library(fastDummies)
 ```
 
